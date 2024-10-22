@@ -1,41 +1,46 @@
 "use client"
 
 import { createContext, useState, ReactNode, useEffect } from "react"
-import firebase from "../../firebase/config"
+import { auth } from "../../firebase/config"
 import Usuario from "../../model/Usuario"
 import { useRouter } from 'next/navigation'
 import Cookies from "js-cookie"
+import { User, GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth'
 
 interface AuthContextProps {
     usuario: Usuario | null
-    carregando?: boolean
+    carregando: boolean
     loginGoogle: () => Promise<void>
-    login?: (email: string, senha: string) => Promise<void>
-    cadastrar?: (email: string, senha: string) => Promise<void>
-    logout?: () => Promise<void>
+    login: (email: string, senha: string) => Promise<void>
+    cadastrar: (email: string, senha: string) => Promise<void>
+    logout: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextProps>({
     usuario: null,
-    loginGoogle: async () => { }
+    carregando: true,
+    loginGoogle: async () => { },
+    login: async () => { },
+    cadastrar: async () => { },
+    logout: async () => { }
 })
 
-async function usuarioNormalizado(usuarioFirebase: firebase.User): Promise<Usuario> {
+async function usuarioNormalizado(usuarioFirebase: User): Promise<Usuario> {
     const token = await usuarioFirebase.getIdToken()
     return {
         uid: usuarioFirebase.uid,
-        nome: usuarioFirebase.displayName,
-        email: usuarioFirebase.email,
+        nome: usuarioFirebase.displayName ?? '',
+        email: usuarioFirebase.email ?? '',
         token,
-        provedor: usuarioFirebase.providerData[0]?.providerId,
-        imagemUrl: usuarioFirebase.photoURL
+        provedor: usuarioFirebase.providerData[0]?.providerId ?? '',
+        imagemUrl: usuarioFirebase.photoURL ?? ''
     }
 }
+
 function gerenciarCookie(logado: boolean) {
     if (logado) {
-        Cookies.set("admin-meirex-auth", logado, {
+        Cookies.set("admin-meirex-auth", String(logado), {
             expires: 7
-
         })
     } else {
         Cookies.remove('admin-meirex-auth')
@@ -47,15 +52,11 @@ interface AuthProviderProps {
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
-
     const router = useRouter()
     const [usuario, setUsuario] = useState<Usuario | null>(null)
     const [carregando, setCarregando] = useState(true)
 
-
-
-    async function configurarSessao(usuarioFirebase) {
-
+    async function configurarSessao(usuarioFirebase: User | null) {
         if (usuarioFirebase?.email) {
             const usuario = await usuarioNormalizado(usuarioFirebase)
             setUsuario(usuario)
@@ -73,12 +74,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
     async function loginGoogle() {
         try {
             setCarregando(true)
-            const resp = await firebase.auth().signInWithPopup(
-                new firebase.auth.GoogleAuthProvider()
-            )
+            const provider = new GoogleAuthProvider()
+            const result = await signInWithPopup(auth, provider)
 
-            if (resp.user?.email) {
-                await configurarSessao(resp.user)
+            if (result.user?.email) {
+                await configurarSessao(result.user)
                 router.push('/')
             }
         } finally {
@@ -86,15 +86,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
         }
     }
 
-
-    async function login(email, senha) {
+    async function login(email: string, senha: string) {
         try {
             setCarregando(true)
-            const resp = await firebase.auth()
-                .signInWithEmailAndPassword(email, senha)
+            const result = await signInWithEmailAndPassword(auth, email, senha)
 
-            if (resp.user?.email) {
-                await configurarSessao(resp.user)
+            if (result.user?.email) {
+                await configurarSessao(result.user)
                 router.push('/')
             }
         } finally {
@@ -102,14 +100,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
         }
     }
 
-    async function cadastrar(email, senha) {
+    async function cadastrar(email: string, senha: string) {
         try {
             setCarregando(true)
-            const resp = await firebase.auth()
-                .createUserWithEmailAndPassword(email, senha)
+            const result = await createUserWithEmailAndPassword(auth, email, senha)
 
-            if (resp.user?.email) {
-                await configurarSessao(resp.user)
+            if (result.user?.email) {
+                await configurarSessao(result.user)
                 router.push('/')
             }
         } finally {
@@ -120,7 +117,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     async function logout() {
         try {
             setCarregando(true)
-            await firebase.auth().signOut()
+            await signOut(auth)
             await configurarSessao(null)
         } finally {
             setCarregando(false)
@@ -129,8 +126,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     useEffect(() => {
         if (Cookies.get('admin-meirex-auth')) {
-            const cancelar = firebase.auth().onIdTokenChanged(configurarSessao)
-            return () => cancelar()
+            const unsubscribe = auth.onIdTokenChanged(configurarSessao)
+            return () => unsubscribe()
         } else {
             setCarregando(false)
         }
